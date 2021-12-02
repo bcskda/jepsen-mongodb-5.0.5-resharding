@@ -9,10 +9,13 @@ RUN \
     && apt update \
     \
     && apt install -y \
-      openssh-server openssh-client \
+      openssh-server openssh-client sudo \
       procps htop vim curl bash-completion \
       leiningen
 
-RUN mkdir /run/sshd
+RUN \
+    mkdir /run/sshd \
+    \
+    && useradd -m -G sudo kda
 
 ENTRYPOINT ["/usr/sbin/sshd", "-D"]

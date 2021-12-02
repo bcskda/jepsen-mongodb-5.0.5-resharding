@@ -7,8 +7,8 @@ services:
     image: nir-dev
     volumes:
       - type: bind
-        source: ./volumes/dev
-        target: /data
+        source: ./volumes/dev-home
+        target: /home/kda/data
     networks:
       - common
 networks:
