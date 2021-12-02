@@ -1,0 +1,16 @@
+version: "3.2"
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: dev.Dockerfile
+    image: nir-dev
+    volumes:
+      - type: bind
+        source: ./volumes/dev
+        target: /data
+    networks:
+      - common
+networks:
+  common:
+    driver: bridge
