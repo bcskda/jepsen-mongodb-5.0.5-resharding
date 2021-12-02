@@ -1,0 +1,3 @@
+[submodule "jepsen"]
+	path = jepsen
+	url = https://github.com/jepsen-io/jepsen
