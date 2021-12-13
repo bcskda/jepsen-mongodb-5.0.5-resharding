@@ -9,14 +9,22 @@
                     [tests :as tests]]
             [jepsen.control.util :as cu]
             [jepsen.control.scp :as cscp]
-            [jepsen.os.debian :as debian]
-            [monger [core :as mg]
-                    [collection :as mc]])
-  (:import org.bson.types.ObjectId))
+            [jepsen.os.debian :as debian])
+  (:import org.bson.BsonInt64)
+  (:import org.bson.BsonDocument)
+  (:import org.bson.BsonString)
+  (:import com.mongodb.ClientSessionOptions)
+  (:import com.mongodb.ConnectionString)
+  (:import com.mongodb.MongoClientSettings)
+  (:import com.mongodb.client.MongoClients)
+  (:import com.mongodb.client.model.Filters)
+  (:import com.mongodb.client.model.UpdateOptions))
 
 (def download-prefix "https://fastdl.mongodb.org/linux/")
 
 (def mongodb-prefix "/opt/mongodb5")
+
+(def replica-set-name "jepsen_mongodb5_simple")
 
 (def mongod-binary (str mongodb-prefix "/bin/mongod"))
 
@@ -101,8 +109,8 @@
           (when (= node "n1")
             (do
               (install-mongosh version)
-              (replica-set-initiate "jepsen_mongodb5_simple")
-              (Thread/sleep 60000))))))
+              (replica-set-initiate replica-set-name)
+              (Thread/sleep 20000))))))
 
     (teardown! [_ test node]
       (info node "tearing down mongo" version)
@@ -122,39 +130,56 @@
 (defn r   [_ _] {:type :invoke, :f :read, :value nil})
 (defn w   [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
 
-(defrecord Client [conn db coll]
+(defn to-bson [obj] (->> obj
+                         (.toString)
+                         (BsonString.)))
+
+(defrecord Client [conn]
   client/Client
   (open! [this test node]
-    (let [conn (mg/connect {:host node}),
-          db (mg/get-db conn "test-db"),
-          coll (str "collection--" (:name test))]
-      (assoc this :conn conn, :db db, :coll coll)))
+    (let [connString (str "mongodb://"
+                          node
+                          "/"
+                          "?replicaSet=" replica-set-name)
+          conn (MongoClients/create connString)]
+      (assoc this :conn conn)))
 
-  (setup! [this test]
-    (mc/create (:db this) (:coll this) {}))
+  (setup! [_ test])
 
   (invoke! [this test op]
-    (case (:f op)
-      :read (assoc op
-                   :type :ok,
-                   :value (mc/find-map-by-id
-                           (:db this)
-                           (:coll this)
-                           {:identifier 0}))
-      :write (assoc op
-                    :type :ok,
-                    :value (mc/update
-                            (:db this)
-                            (:coll this)
-                            {:identifier 0}
-                            {:mapped 21}
-                            {:upsert true}))))
+    (let [sessionOptions (->>
+            (ClientSessionOptions/builder)
+            ((fn [builder] (.causallyConsistent builder true)))
+            (.build))
+          db (.getDatabase conn "test_db")
+          coll (.getCollection db "test_collection")
+          session(.startSession conn sessionOptions)
+          ]
+      (case (:f op)
+        :read (let [findResult (.first (.find coll
+                                              session
+                                              (Filters/eq "id0")))
+                    opResult (when (some? findResult)
+                                (.toString (.getString findResult "value")))]
+                (assoc op
+                       :type :ok
+                       :value opResult))
+        :write (do
+                 (.updateOne coll
+                             session
+                             (Filters/eq "id0")
+                             (BsonDocument. "$set"
+                                            (BsonDocument. "value"
+                                                           (to-bson (:value op))))
+                             (.upsert (UpdateOptions.) true))
+                 (assoc op
+                        :type :ok
+                        :value nil)))))
 
-  (teardown! [this test]
-    (mc/drop (:db this) (:coll this)))
-  
+  (teardown! [_ test])
+
   (close! [this test]
-    (mg/disconnect (:conn this))))
+    (.close (:conn this))))
 
 (defn mongodb5-test
   "Options -> test map"
@@ -165,7 +190,7 @@
           :name            "mongo"
           :os              debian/os
           :db              (db "5.0.5")
-          :client          (Client. nil nil nil)
+          :client          (Client. nil)
           :generator       (->> (gen/mix [r w])
                                 (gen/stagger 1)
                                 (gen/nemesis nil)

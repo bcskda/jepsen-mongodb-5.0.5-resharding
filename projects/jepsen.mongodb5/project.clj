@@ -5,7 +5,7 @@
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[org.clojure/clojure "1.10.0"]
                  [jepsen "0.2.5"]
-                 [com.novemberain/monger "3.5.0"]]
+                 [org.mongodb/mongodb-driver-sync "4.4.0"]]
   :resource-paths ["resources"]
   :main jepsen.mongodb5
   :repl-options {:init-ns jepsen.mongodb5})
