@@ -1,6 +1,6 @@
-(ns jepsen.etcdemo-test
+(ns jepsen.mongodb5-test
   (:require [clojure.test :refer :all]
-            [jepsen.etcdemo :refer :all]))
+            [mongodb5.core :refer :all]))
 
 (deftest a-test
   (testing "FIXME, I fail."
