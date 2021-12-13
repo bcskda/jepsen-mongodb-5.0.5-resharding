@@ -2,12 +2,17 @@
   (:require [clojure.tools.logging :refer :all]
             [clojure.string :as str]
             [jepsen [cli :as cli]
+                    [client :as client]
                     [control :as c]
                     [db :as db]
+                    [generator :as gen]
                     [tests :as tests]]
             [jepsen.control.util :as cu]
             [jepsen.control.scp :as cscp]
-            [jepsen.os.debian :as debian]))
+            [jepsen.os.debian :as debian]
+            [monger [core :as mg]
+                    [collection :as mc]])
+  (:import org.bson.types.ObjectId))
 
 (def download-prefix "https://fastdl.mongodb.org/linux/")
 
@@ -92,11 +97,12 @@
             :chdir mongodb-prefix}
             mongod-binary
             :--config mongod-config)
-          (Thread/sleep 10000)
+          (Thread/sleep 20000)
           (when (= node "n1")
             (do
               (install-mongosh version)
-              (replica-set-initiate "jepsen_mongodb5_simple"))))))
+              (replica-set-initiate "jepsen_mongodb5_simple")
+              (Thread/sleep 60000))))))
 
     (teardown! [_ test node]
       (info node "tearing down mongo" version)
@@ -109,15 +115,61 @@
     (log-files [_ test node]
       [mongod-logfile])))
 
+;
+; Client and operations
+;
+
+(defn r   [_ _] {:type :invoke, :f :read, :value nil})
+(defn w   [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
+
+(defrecord Client [conn db coll]
+  client/Client
+  (open! [this test node]
+    (let [conn (mg/connect {:host node}),
+          db (mg/get-db conn "test-db"),
+          coll (str "collection--" (:name test))]
+      (assoc this :conn conn, :db db, :coll coll)))
+
+  (setup! [this test]
+    (mc/create (:db this) (:coll this) {}))
+
+  (invoke! [this test op]
+    (case (:f op)
+      :read (assoc op
+                   :type :ok,
+                   :value (mc/find-map-by-id
+                           (:db this)
+                           (:coll this)
+                           {:identifier 0}))
+      :write (assoc op
+                    :type :ok,
+                    :value (mc/update
+                            (:db this)
+                            (:coll this)
+                            {:identifier 0}
+                            {:mapped 21}
+                            {:upsert true}))))
+
+  (teardown! [this test]
+    (mc/drop (:db this) (:coll this)))
+  
+  (close! [this test]
+    (mg/disconnect (:conn this))))
+
 (defn mongodb5-test
   "Options -> test map"
   [opts]
   (merge tests/noop-test
          opts
-         {:name            "mongo"
+         {:pure-generators true
+          :name            "mongo"
           :os              debian/os
           :db              (db "5.0.5")
-          :pure-generators true}))
+          :client          (Client. nil nil nil)
+          :generator       (->> (gen/mix [r w])
+                                (gen/stagger 1)
+                                (gen/nemesis nil)
+                                (gen/time-limit 15))}))
 
 (defn -main
   "Handles cmdline. Can run a test or a webserver to observe results"
