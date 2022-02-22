@@ -6,6 +6,7 @@
   :dependencies [[org.clojure/clojure "1.10.0"]
                  [jepsen "0.2.5"]
                  [org.mongodb/mongodb-driver-sync "4.4.0"]]
+  ;:source-paths ["src/"]
   :resource-paths ["resources"]
-  :main jepsen.mongodb5
+  :main jepsen.mongodb5.core
   :repl-options {:init-ns jepsen.mongodb5})
