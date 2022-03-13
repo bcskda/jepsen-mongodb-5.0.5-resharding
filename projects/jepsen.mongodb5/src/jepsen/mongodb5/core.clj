@@ -3,38 +3,46 @@
             [jepsen [checker :as checker]
                     [cli :as cli]
                     [generator :as gen]
+                    [nemesis :as nemesis]
                     [tests :as tests]]
             [jepsen.os.debian :as debian]
             [jepsen.mongodb5.client :as mongo-client]
             [jepsen.mongodb5.support :as mongo-support]
             [knossos.model :as model]))
 
+(def replica-set-name "jepsen_mongodb5_simple")
+
 (defn r   [_ _] {:type :invoke, :f :read, :value nil})
 (defn w   [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
 
-(defn mongodb5-test
-  "Options -> test map"
+(defn mongodb5-rw-simple-test
   [opts]
   (merge tests/noop-test
          opts
          {:pure-generators true
           :name            "mongo"
           :os              debian/os
-          :rs-name         "jepsen_mongodb5_simple"
-          :db              (mongo-support/db "5.0.5" "jepsen_mongodb5_simple")
+          :rs-name         replica-set-name
+          :db              (mongo-support/db "5.0.5" replica-set-name)
           :client          (mongo-client/client)
+          :nemesis         (nemesis/partition-random-halves)
           :checker         (checker/linearizable
                              {:model (model/register)
                               :algorithm :linear})
-          :generator       (->> (gen/mix [r w])
-                                (gen/stagger 1)
-                                (gen/nemesis nil)
-                                (gen/time-limit 15))}))
+          :generator       (->> (gen/reserve 4 (repeat r)
+                                             1 (repeat w))
+                                (gen/stagger 0.01)
+                                (gen/nemesis
+                                  (cycle [(gen/sleep 2)
+                                          {:type :info, :f :start}
+                                          (gen/sleep 8)
+                                          {:type :info, :f :stop}]))
+                                (gen/time-limit 60))}))
 
 (defn -main
   "Handles cmdline. Can run a test or a webserver to observe results"
   [& args]
   (prn "Command line:" args)
-  (cli/run! (merge (cli/single-test-cmd {:test-fn mongodb5-test})
+  (cli/run! (merge (cli/single-test-cmd {:test-fn mongodb5-rw-simple-test})
                    (cli/serve-cmd))
             args))
