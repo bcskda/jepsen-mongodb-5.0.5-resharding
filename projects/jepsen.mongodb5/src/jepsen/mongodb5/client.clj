@@ -17,7 +17,9 @@
     (let [connString (str "mongodb://"
                           node
                           "/"
-                          "?replicaSet=" (:rs-name test))
+                          "?replicaSet=" (:rs-name test)
+                          "&w=" 1
+                          "&readPreference=" "nearest")
           conn (MongoClients/create connString)
           txn-opts (->
             (TransactionOptions/builder)
