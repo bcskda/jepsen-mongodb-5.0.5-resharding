@@ -8,9 +8,23 @@
   (:import com.mongodb.ClientSessionOptions)
   (:import com.mongodb.TransactionOptions)
   (:import com.mongodb.ReadConcern)
+  (:import com.mongodb.ReadConcernLevel)
   (:import com.mongodb.ReadPreference)
   (:import com.mongodb.WriteConcern)
   (:import com.mongodb.client.MongoClients))
+
+(defn txn-options
+  ([w-concern r-concern r-preference]
+   (->
+     (TransactionOptions/builder)
+     (.writeConcern (WriteConcern/valueOf w-concern))
+     (.readConcern (ReadConcern. (ReadConcernLevel/fromString r-concern)))
+     (.readPreference (ReadPreference/valueOf r-preference))
+     (.build)))
+  ([options-map]
+   (txn-options (:w options-map)
+                (:readConcern options-map)
+                (:readPreference options-map))))
 
 (defn connection-string
   ([host options]
@@ -26,12 +40,7 @@
   (open! [this test node]
     (let [connString (connection-string node (:conn-opts test))
           conn (MongoClients/create connString)
-          txn-opts (->
-            (TransactionOptions/builder)
-            (.readConcern ReadConcern/LOCAL)
-            (.readPreference (ReadPreference/secondary))
-            (.writeConcern WriteConcern/JOURNALED)
-            (.build))
+          txn-opts (txn-options (:txn-opts test))
           session-opts (->
             (ClientSessionOptions/builder)
             (.causallyConsistent false)

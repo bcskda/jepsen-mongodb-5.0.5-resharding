@@ -27,6 +27,9 @@
           :conn-opts       {:replicaSet replica-set-name
                             :w 1
                             :readPreference "nearest"}
+          :txn-opts        {:w "journaled"
+                            :readConcern "local"
+                            :readPreference "secondary"}
           :db              (mongo-support/db "5.0.5" replica-set-name)
           :client          (mongo-client/client)
           :nemesis         (nemesis/partition-random-halves)
