@@ -17,6 +17,7 @@
 
 (defn mongodb5-rw-simple-test
   [opts]
+  (print opts)
   (merge tests/noop-test
          opts
          {:pure-generators true
@@ -29,15 +30,15 @@
           :checker         (checker/linearizable
                              {:model (model/register)
                               :algorithm :linear})
-          :generator       (->> (gen/reserve 4 (repeat r)
-                                             1 (repeat w))
-                                (gen/stagger 0.01)
+          :generator       (->> (gen/reserve 1 (repeat w)
+                                             (- (:concurrency opts) 1) (repeat r))
+                                (gen/stagger 0.1)
                                 (gen/nemesis
-                                  (cycle [(gen/sleep 2)
+                                  (cycle [(gen/sleep 1)
                                           {:type :info, :f :start}
-                                          (gen/sleep 8)
+                                          (gen/sleep 4)
                                           {:type :info, :f :stop}]))
-                                (gen/time-limit 60))}))
+                                (gen/time-limit 10))}))
 
 (defn -main
   "Handles cmdline. Can run a test or a webserver to observe results"
