@@ -15,9 +15,8 @@
 (defn r   [_ _] {:type :invoke, :f :read, :value nil})
 (defn w   [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
 
-(defn mongodb5-rw-simple-test
+(defn mongodb5-test-base
   [opts]
-  (print opts)
   (merge tests/noop-test
          opts
          {:pure-generators true
@@ -32,8 +31,13 @@
                             :readPreference "secondary"}
           :causally-cst    false
           :db              (mongo-support/db "5.0.5" replica-set-name)
-          :client          (mongo-client/client)
-          :nemesis         (nemesis/partition-random-halves)
+          :client          (mongo-client/client)}))
+
+(defn mongodb5-rw-simple-test
+  [opts]
+  (merge (mongodb5-test-base opts)
+         opts
+         {:nemesis         (nemesis/partition-random-halves)
           :checker         (checker/linearizable
                              {:model (model/register)
                               :algorithm :linear})
