@@ -2,7 +2,8 @@
   (:require [clojure.tools.logging :refer :all]
             [clojure.string :as str]
             [jepsen [client :as client]]
-            [jepsen.mongodb5.driver :refer [write-v read-v] :as driver])
+            [jepsen.mongodb5.driver :refer [write-v read-v] :as driver]
+            [jepsen.mongodb5.support :refer [url skip-nil-values]])
   (:import jepsen.mongodb5.driver.KvCollection)
   (:import com.mongodb.ClientSessionOptions)
   (:import com.mongodb.TransactionOptions)
@@ -11,15 +12,19 @@
   (:import com.mongodb.WriteConcern)
   (:import com.mongodb.client.MongoClients))
 
+(defn connection-string
+  ([host options]
+   (url "mongodb" host "/" (skip-nil-values options)))
+  ([host rs-name w read-preference]
+   (let [options {:replicaSet rs-name
+                 :w w
+                 :readPreference read-preference}]
+     (connection-string host options))))
+
 (defrecord Client [conn kvColl]
   client/Client
   (open! [this test node]
-    (let [connString (str "mongodb://"
-                          node
-                          "/"
-                          "?replicaSet=" (:rs-name test)
-                          "&w=" 1
-                          "&readPreference=" "nearest")
+    (let [connString (connection-string node (:conn-opts test))
           conn (MongoClients/create connString)
           txn-opts (->
             (TransactionOptions/builder)

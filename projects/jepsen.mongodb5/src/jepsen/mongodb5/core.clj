@@ -24,6 +24,9 @@
           :name            "mongo"
           :os              debian/os
           :rs-name         replica-set-name
+          :conn-opts       {:replicaSet replica-set-name
+                            :w 1
+                            :readPreference "nearest"}
           :db              (mongo-support/db "5.0.5" replica-set-name)
           :client          (mongo-client/client)
           :nemesis         (nemesis/partition-random-halves)
