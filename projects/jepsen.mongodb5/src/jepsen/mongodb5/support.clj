@@ -121,3 +121,16 @@
     db/LogFiles
     (log-files [_ test node]
       [mongod-logfile])))
+
+(defn url
+  [scheme host path query-options]
+  (let [k=v (fn [[k v]] (str (name k) "=" v))
+        query (clojure.string/join "&" (map k=v query-options))]
+    (str scheme "://"
+         host
+         path
+         (when-not (clojure.string/blank? query) (str "?" query)))))
+
+(defn skip-nil-values
+  [mapping]
+  (filter (fn [[k v]] v) mapping))
