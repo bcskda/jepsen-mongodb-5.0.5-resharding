@@ -26,6 +26,13 @@
                 (:readConcern options-map)
                 (:readPreference options-map))))
 
+(defn session-options [causally-cst txn-opts]
+  (->
+    (ClientSessionOptions/builder)
+    (.causallyConsistent causally-cst)
+    (.defaultTransactionOptions txn-opts)
+    (.build)))
+
 (defn connection-string
   ([host options]
    (url "mongodb" host "/" (skip-nil-values options)))
@@ -41,11 +48,7 @@
     (let [connString (connection-string node (:conn-opts test))
           conn (MongoClients/create connString)
           txn-opts (txn-options (:txn-opts test))
-          session-opts (->
-            (ClientSessionOptions/builder)
-            (.causallyConsistent false)
-            (.defaultTransactionOptions txn-opts)
-            (.build))
+          session-opts (session-options (:causally-cst test) txn-opts)
           kvColl (driver/kv-collection conn
                                        "test_db"
                                        "test_collection"

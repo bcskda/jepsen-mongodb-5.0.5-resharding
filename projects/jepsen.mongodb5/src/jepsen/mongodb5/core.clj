@@ -30,6 +30,7 @@
           :txn-opts        {:w "journaled"
                             :readConcern "local"
                             :readPreference "secondary"}
+          :causally-cst    false
           :db              (mongo-support/db "5.0.5" replica-set-name)
           :client          (mongo-client/client)
           :nemesis         (nemesis/partition-random-halves)
