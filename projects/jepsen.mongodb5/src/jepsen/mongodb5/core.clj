@@ -23,21 +23,20 @@
           :name            "mongo"
           :os              debian/os
           :rs-name         replica-set-name
-          :conn-opts       {:replicaSet replica-set-name
+          :db              (mongo-support/db "5.0.5" replica-set-name)
+          :client          (mongo-client/client)}))
+
+(defn unsafe-concerns-break-rw-reg
+  [opts]
+  (merge (mongodb5-test-base opts)
+         {:conn-opts       {:replicaSet replica-set-name
                             :w 1
                             :readPreference "nearest"}
           :txn-opts        {:w "journaled"
                             :readConcern "local"
                             :readPreference "secondary"}
           :causally-cst    false
-          :db              (mongo-support/db "5.0.5" replica-set-name)
-          :client          (mongo-client/client)}))
-
-(defn mongodb5-rw-simple-test
-  [opts]
-  (merge (mongodb5-test-base opts)
-         opts
-         {:nemesis         (nemesis/partition-random-halves)
+          :nemesis         (nemesis/partition-random-halves)
           :checker         (checker/linearizable
                              {:model (model/register)
                               :algorithm :linear})
@@ -51,10 +50,15 @@
                                           {:type :info, :f :stop}]))
                                 (gen/time-limit 10))}))
 
+(defn all-test-fns
+  [opts]
+  (map #(% opts) [unsafe-concerns-break-rw-reg]))
+
 (defn -main
   "Handles cmdline. Can run a test or a webserver to observe results"
   [& args]
   (prn "Command line:" args)
-  (cli/run! (merge (cli/single-test-cmd {:test-fn mongodb5-rw-simple-test})
+  (cli/run! (merge (cli/single-test-cmd {:test-fn unsafe-concerns-break-rw-reg})
+                   (cli/test-all-cmd {:tests-fn all-test-fns})
                    (cli/serve-cmd))
             args))
