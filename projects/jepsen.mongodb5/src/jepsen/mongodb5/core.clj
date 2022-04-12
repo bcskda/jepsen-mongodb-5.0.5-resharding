@@ -4,16 +4,21 @@
                     [cli :as cli]
                     [generator :as gen]
                     [nemesis :as nemesis]
+                    [store :as store]
                     [tests :as tests]]
             [jepsen.os.debian :as debian]
             [jepsen.mongodb5.client :as mongo-client]
             [jepsen.mongodb5.support :as mongo-support]
-            [knossos.model :as model]))
+            [knossos.model :as model]
+            [elle.rw-register :as elle-rw]))
 
 (def replica-set-name "jepsen_mongodb5_simple")
 
 (defn r   [_ _] {:type :invoke, :f :read, :value nil})
-(defn w   [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
+(defn w   [_ _] {:type :invoke, :f :write, :value (long (rand 5))})
+
+(defn elle-rw-r   [_ _] {:type :invoke, :f :read, :value nil})
+(defn elle-rw-w   [_ _] {:type :invoke, :f :write, :value (long (rand 1e10))})
 
 (defn mongodb5-test-base
   [opts]
@@ -25,6 +30,36 @@
           :rs-name         replica-set-name
           :db              (mongo-support/db "5.0.5" replica-set-name)
           :client          (mongo-client/client)}))
+
+(defn ellify-op
+  [op]
+  (case op
+    :read :r
+    :write :w
+    op))
+
+(defn ellify-event
+  [event]
+  {:index (:index event)
+   :type (:type event)
+   :process (:process event)
+   :value [[(ellify-op (:f event)) :key0 (:value event)]]})
+
+(defn ellify-history
+  [jepsen-history]
+  (map ellify-event jepsen-history))
+
+(defn elle-rw-checker
+  ([]
+   (elle-rw-checker {}))
+  ([opts]
+   (reify checker/Checker
+     (check [this test history checker-opts]
+       (elle-rw/check (assoc opts
+                             :directory (.getCanonicalPath (store/path! test
+                                                                       (:subdirectory checker-opts)
+                                                                       "elle")))
+                      (ellify-history history))))))
 
 (defn unsafe-concerns-break-rw-reg
   [opts]
@@ -50,15 +85,88 @@
                                           {:type :info, :f :stop}]))
                                 (gen/time-limit 10))}))
 
+(defn unsafe-concerns-break-rw-reg--elle-rw
+  [opts]
+  (merge (mongodb5-test-base opts)
+         {:conn-opts       {:replicaSet replica-set-name
+                            :w 1
+                            :readPreference "nearest"}
+          :txn-opts        {:w "journaled"
+                            :readConcern "local"
+                            :readPreference "secondary"}
+          :causally-cst    false
+          :nemesis         (nemesis/partition-random-halves)
+          :checker         (elle-rw-checker)
+          :generator       (->> (gen/reserve 1 (repeat elle-rw-w)
+                                             (- (:concurrency opts) 1) (repeat elle-rw-r))
+                                (gen/stagger 0.1)
+                                (gen/nemesis
+                                  (cycle [(gen/sleep 1)
+                                          {:type :info, :f :start}
+                                          (gen/sleep 4)
+                                          {:type :info, :f :stop}]))
+                                (gen/time-limit 10))}))
+
+(defn unsafe-concerns-pass-rw-reg-2--elle-rw
+  [opts]
+  (merge (mongodb5-test-base opts)
+         {:conn-opts       {:replicaSet replica-set-name
+                            :w "majority"
+                            :readConcernLevel "majority"
+                            :readPreference "nearest"}
+          :txn-opts        {:w "journaled"
+                            :readConcern "majority"
+                            :readPreference "nearest"}
+          :causally-cst    false
+          :nemesis         (nemesis/partition-random-halves)
+          :checker         (elle-rw-checker)
+          :generator       (->> (gen/reserve 1 (repeat elle-rw-w)
+                                             (- (:concurrency opts) 1) (repeat elle-rw-r))
+                                (gen/stagger 0.1)
+                                (gen/nemesis
+                                  (cycle [(gen/sleep 1)
+                                          {:type :info, :f :start}
+                                          (gen/sleep 4)
+                                          {:type :info, :f :stop}]))
+                                (gen/time-limit 10))}))
+
+(defn safe-concerns-pass-rw-reg--elle-rw
+  [opts]
+  (merge (mongodb5-test-base opts)
+         {:conn-opts       {:replicaSet replica-set-name
+                            :w "majority"
+                            :readConcernLevel "majority"
+                            :readPreference "primary"}
+          :txn-opts        {:w "journaled"
+                            :readConcern "majority"
+                            :readPreference "primary"}
+          :causally-cst    false
+          :nemesis         (nemesis/partition-random-halves)
+          :checker         (elle-rw-checker)
+          :generator       (->> (gen/reserve 1 (repeat elle-rw-w)
+                                             (- (:concurrency opts) 1) (repeat elle-rw-r))
+                                (gen/stagger 0.1)
+                                (gen/nemesis
+                                  (cycle [(gen/sleep 1)
+                                          {:type :info, :f :start}
+                                          (gen/sleep 4)
+                                          {:type :info, :f :stop}
+                                          (gen/sleep 2)
+                                          {:type :info, :f :start}
+                                          (gen/sleep 8)
+                                          {:type :info, :f :stop}]))
+                                (gen/time-limit 60))}))
+
 (defn all-test-fns
   [opts]
-  (map #(% opts) [unsafe-concerns-break-rw-reg]))
+  (map #(% opts) [unsafe-concerns-break-rw-reg
+                  unsafe-concerns-break-rw-reg--elle-rw]))
 
 (defn -main
   "Handles cmdline. Can run a test or a webserver to observe results"
   [& args]
   (prn "Command line:" args)
-  (cli/run! (merge (cli/single-test-cmd {:test-fn unsafe-concerns-break-rw-reg})
+  (cli/run! (merge (cli/single-test-cmd {:test-fn safe-concerns-pass-rw-reg--elle-rw})
                    (cli/test-all-cmd {:tests-fn all-test-fns})
                    (cli/serve-cmd))
             args))
