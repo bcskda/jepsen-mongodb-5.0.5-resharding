@@ -59,8 +59,8 @@
 
   (invoke! [this test op]
     (case (:f op)
-      :read (assoc op :type :ok :value (read-v (:kvColl this) "id0"))
-      :write (do (write-v (:kvColl this) "id0" (:value op))
+      :read (assoc op :type :ok :value (read-v (:kvColl this) (:key op)))
+      :write (do (write-v (:kvColl this) (:key op) (:value op))
                  (assoc op :type :ok))))
 
   (teardown! [_ test])
