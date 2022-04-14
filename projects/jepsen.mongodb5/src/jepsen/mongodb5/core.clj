@@ -14,11 +14,13 @@
 
 (def replica-set-name "jepsen_mongodb5_simple")
 
-(defn r   [_ _] {:type :invoke, :f :read, :value nil})
-(defn w   [_ _] {:type :invoke, :f :write, :value (long (rand 5))})
+(defn random-long [n] (long (rand n)))
+(defn random-key [n] (str "key" (random-long n)))
+(defn r   [_ _] {:type :invoke, :f :read, :key "key0", :value nil})
+(defn w   [_ _] {:type :invoke, :f :write, :key "key0", :value (random-long 5)})
 
-(defn elle-rw-r   [_ _] {:type :invoke, :f :read, :value nil})
-(defn elle-rw-w   [_ _] {:type :invoke, :f :write, :value (long (rand 1e10))})
+(defn elle-rw-r   [_ _] {:type :invoke, :f :read, :key (random-key 10), :value nil})
+(defn elle-rw-w   [_ _] {:type :invoke, :f :write, :key (random-key 10), :value (random-long 1e10)})
 
 (defn mongodb5-test-base
   [opts]
@@ -43,7 +45,7 @@
   {:index (:index event)
    :type (:type event)
    :process (:process event)
-   :value [[(ellify-op (:f event)) :key0 (:value event)]]})
+   :value [[(ellify-op (:f event)) (:key event) (:value event)]]})
 
 (defn ellify-history
   [jepsen-history]
@@ -55,11 +57,10 @@
   ([opts]
    (reify checker/Checker
      (check [this test history checker-opts]
-       (elle-rw/check (assoc opts
-                             :directory (.getCanonicalPath (store/path! test
-                                                                       (:subdirectory checker-opts)
-                                                                       "elle")))
-                      (ellify-history history))))))
+       (let [directory (-> (store/path! test (:subdirectory checker-opts) "elle")
+                           (.getCanonicalPath))]
+          (elle-rw/check (assoc opts :directory directory)
+                         (ellify-history history)))))))
 
 (defn unsafe-concerns-break-rw-reg
   [opts]
@@ -107,7 +108,7 @@
                                           {:type :info, :f :stop}]))
                                 (gen/time-limit 10))}))
 
-(defn unsafe-concerns-pass-rw-reg-2--elle-rw
+(defn unsafe-concerns-break-rw-reg-2--elle-rw
   [opts]
   (merge (mongodb5-test-base opts)
          {:conn-opts       {:replicaSet replica-set-name
@@ -157,16 +158,47 @@
                                           {:type :info, :f :stop}]))
                                 (gen/time-limit 60))}))
 
+(defn safe-concerns-pass-rw-reg-mixed--elle-rw
+  [opts]
+  (merge (mongodb5-test-base opts)
+         {:conn-opts       {:replicaSet replica-set-name
+                            :w "majority"
+                            :readConcernLevel "majority"
+                            :readPreference "primary"}
+          :txn-opts        {:w "journaled"
+                            :readConcern "majority"
+                            :readPreference "primary"}
+          :causally-cst    false
+          :nemesis         (nemesis/partition-random-halves)
+          :checker         (elle-rw-checker)
+          :generator       (->> (gen/mix [(repeat elle-rw-w)
+                                          (repeat elle-rw-r)])
+                                (gen/stagger 0.1)
+                                (gen/nemesis
+                                  (cycle [(gen/sleep 1)
+                                          {:type :info, :f :start}
+                                          (gen/sleep 4)
+                                          {:type :info, :f :stop}
+                                          (gen/sleep 2)
+                                          {:type :info, :f :start}
+                                          (gen/sleep 8)
+                                          {:type :info, :f :stop}]))
+                                (gen/time-limit 60))}))
+
+
 (defn all-test-fns
   [opts]
   (map #(% opts) [unsafe-concerns-break-rw-reg
-                  unsafe-concerns-break-rw-reg--elle-rw]))
+                  unsafe-concerns-break-rw-reg--elle-rw
+                  unsafe-concerns-break-rw-reg-2--elle-rw
+                  safe-concerns-pass-rw-reg--elle-rw
+                  safe-concerns-pass-rw-reg-mixed--elle-rw]))
 
 (defn -main
   "Handles cmdline. Can run a test or a webserver to observe results"
   [& args]
   (prn "Command line:" args)
-  (cli/run! (merge (cli/single-test-cmd {:test-fn safe-concerns-pass-rw-reg--elle-rw})
+  (cli/run! (merge (cli/single-test-cmd {:test-fn safe-concerns-pass-rw-reg-mixed--elle-rw})
                    (cli/test-all-cmd {:tests-fn all-test-fns})
                    (cli/serve-cmd))
             args))
