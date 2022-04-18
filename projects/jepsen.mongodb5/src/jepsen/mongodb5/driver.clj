@@ -1,6 +1,7 @@
 (ns jepsen.mongodb5.driver
   (:import org.bson.BsonDocument)
   (:import org.bson.BsonInt64)
+  (:import com.mongodb.client.TransactionBody)
   (:import com.mongodb.client.model.Filters)
   (:import com.mongodb.client.model.UpdateOptions))
 
@@ -23,7 +24,11 @@
 
 (defprotocol Key-Value
   (read-v [this k])
-  (write-v [this k v]))
+  (write-v [this k v])
+  ;(txn-start [this])
+  ;(txn-commit [this])
+  ;(has-txn [this])
+  (with-txn [this body]))
 
 (defrecord KvCollection [coll session]
   Key-Value
@@ -33,7 +38,31 @@
             (.getLong result "value"))))
 
   (write-v [this k v]
-    (kvcoll-upsert coll session k v)))
+    (kvcoll-upsert coll session k v))
+
+  ;(txn-start [this]
+  ;  (-> session
+  ;       (.startTransaction)))
+  ;   ;(throw (let [options (-> session
+  ;   ;                         (.getTransactionOptions))
+  ;   ;             readConcern (-> options
+  ;   ;                             (.getReadConcern)
+  ;   ;                             (.asDocument))]
+  ;   ;         (Exception. (str options readConcern))))))
+
+  ;(txn-commit [this]
+  ;  (-> session
+  ;      (.commitTransaction)))
+
+  ;(has-txn [this]
+  ;  (-> session
+  ;      (.hasActiveTransaction)))
+
+  (with-txn [this func]
+    (let [body (reify TransactionBody
+                  (execute [_] (func)))]
+      (-> session
+          (.withTransaction body)))))
 
 (defn kv-collection [conn db-name coll-name session-opts]
   (let [coll (-> conn (.getDatabase db-name)
