@@ -134,3 +134,5 @@
 (defn skip-nil-values
   [mapping]
   (filter (fn [[k v]] v) mapping))
+
+(defn rand-long [n] (long (rand n)))
