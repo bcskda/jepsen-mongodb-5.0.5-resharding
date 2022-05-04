@@ -25,6 +25,8 @@
 
 (def mongos-config-path (str mongodb-prefix "/mongos.custom.conf"))
 
+(def mongos-logfile (str mongodb-prefix "/log/mongos.log"))
+
 (def mongos-pidfile (str mongodb-prefix "/mongos.pid"))
 
 
@@ -100,8 +102,9 @@
   "Install mongos config file and create directories"
    [configsvr-rs configsvr-nodes]
    (c/su
-     (let [config-template (slurp (io/resource "mongos.conf"))
-          config (format config-template configsvr-rs configsvr-nodes)]
+     (let [nodes (clojure.string/join "," (map #(str % ":27017") configsvr-nodes))
+           config-template (slurp (io/resource "mongos.conf"))
+           config (format config-template configsvr-rs nodes)]
        (cu/write-file! config mongos-config-path))))
 
 
@@ -175,28 +178,32 @@
             is-rs-initiator (if (:sharded test)
                                 (= (mod node-number 3) 1)
                                 (= node-number 1))
-            is-shard (> shard-number 0)
+            is-shard (and (:sharded test) (> shard-number 0))
             confrs-name (str rs-name "-conf")
             shardrs-name (str rs-name "-shard" shard-number)
             rs-name (if (:sharded test)
                         (if is-shard shardrs-name confrs-name)
-                        rs-name)]
+                        rs-name)
+            mongod-common-opts [{:logfile mongod-logfile
+                                 :pidfile mongod-pidfile
+                                 :chdir mongodb-prefix}
+                                mongod-binary-path
+                                :--config mongod-config-path]
+            mongod-opts (if (and (:sharded test) (= shard-number 0))
+                            (merge mongod-common-opts :--configsvr)
+                            mongod-common-opts)]
         (c/su
           (install-mongodb version)
           (configure-mongod rs-name)
-          (cu/start-daemon!
-            {:logfile mongod-logfile
-            :pidfile mongod-pidfile
-            :chdir mongodb-prefix}
-            mongod-binary-path
-            :--config mongod-config-path)
+          (apply cu/start-daemon! mongod-opts)
           (Thread/sleep 20000)
           (when (:sharded test)
             (do
               ;(install-mongos version)
               (configure-mongos confrs-name ["n1" "n2" "n3"])
               (cu/start-daemon!
-                {:pidfile mongos-pidfile
+                {:logfile mongos-logfile
+                 :pidfile mongos-pidfile
                  :chdir mongodb-prefix}
                  mongos-binary-path
                  :--config mongos-config-path)
@@ -226,11 +233,13 @@
       [mongod-logfile])))
 
 (defn url
-  [scheme host path query-options]
+  [scheme host port path query-options]
   (let [k=v (fn [[k v]] (str (name k) "=" v))
         query (clojure.string/join "&" (map k=v query-options))]
     (str scheme "://"
          host
+         ":"
+         port
          path
          (when-not (clojure.string/blank? query) (str "?" query)))))
 

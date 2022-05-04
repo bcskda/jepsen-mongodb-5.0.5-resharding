@@ -177,6 +177,35 @@
                                           {:type :info, :f :stop}]))
                                 (gen/time-limit (or (int (:time-limit opts)) 60)))}))
 
+(defn try-multishard-deployment
+  [rs-name opts]
+  (merge (test-base rs-name opts)
+         {:sharded true
+          :conn-opts       {:port 55555
+                            :w "majority"
+                            :readConcernLevel "majority"
+                            :readPreference "primary"}
+          :txn-opts        {:w "majority"
+                            :readConcern "majority"
+                            :readPreference "primary"}
+          :nemesis         (nemesis/partition-random-halves)
+          :checker         (elle-rw-checker {:consistency-models [:snapshot-isolation]})
+          ; Fetch-add would write the same value multple times
+          ; and cause elle/rw_register to fail
+          ;:generator       (->> (repeat (elle-txn--rmw {:f :add, :value 1970}))
+          :generator       (->> (repeat (elle-txn--rmw {:f :random, :value 1e9}))
+                                (gen/stagger 0.1)
+                                (gen/nemesis
+                                  (cycle [(gen/sleep 1)
+                                          {:type :info, :f :start}
+                                          (gen/sleep 4)
+                                          {:type :info, :f :stop}
+                                          (gen/sleep 2)
+                                          {:type :info, :f :start}
+                                          (gen/sleep 8)
+                                          {:type :info, :f :stop}]))
+                                (gen/time-limit (or (int (:time-limit opts)) 60)))}))
+
 (def all-tests [unsafe-concerns-not-linearizable
                 single-document-linearizable
                 single-shard-only-snapshot-isolation])

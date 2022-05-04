@@ -37,7 +37,7 @@
 
 (defn connection-string
   ([host options]
-   (url "mongodb" host "/" (skip-nil-values options)))
+   (url "mongodb" host (:port options) "/" (skip-nil-values options)))
   ([host rs-name w read-preference]
    (let [options {:replicaSet rs-name
                  :w w
