@@ -162,6 +162,17 @@
   (let [shard-nodes (map #(str "n" (+ % (* 3 shard-number))) [1 2 3])]
     (add-shard shard-nodes shard-rs-name)))
 
+
+(defn shard-collection
+  [db-name coll-name key-name shard-type]
+  (let [remote-script-path (str (cu/tmp-file!))
+        script-template (slurp (io/resource "shard-collection.js"))
+        script (format script-template
+                       db-name
+                       db-name coll-name key-name shard-type)]
+    (cu/write-file! script remote-script-path)
+    (c/exec mongosh-binary-path "localhost:55555" remote-script-path)))
+
 (defn db
   "Mongo for this specific version"
   [version rs-name]
@@ -214,13 +225,17 @@
             (do
               (install-mongosh version)
               (if (:sharded test)
-                (replica-set-initiate rs-name rs-nodes is-shard)
-                (replica-set-initiate rs-name rs-nodes))
+                  (replica-set-initiate rs-name rs-nodes is-shard)
+                  (replica-set-initiate rs-name rs-nodes))
               (Thread/sleep 20000)))
-          (when (and (:sharded test) (> shard-number 0) is-rs-initiator)
-            (info "Adding shard" rs-name)
-            (add-shard-from-node shard-number rs-name))
-          (Thread/sleep 30000))))
+          (when (:sharded test) 
+            (when (and (> shard-number 0) is-rs-initiator)
+              (info "Adding shard" rs-name)
+              (add-shard-from-node shard-number rs-name))
+            (Thread/sleep 20000)
+            (when (and (= shard-number 0) is-rs-initiator)
+              (shard-collection "test_db" "test_collection" "_id" "\"hashed\""))
+            (Thread/sleep 10000)))))
 
     (teardown! [_ test node]
       (info "Tearing down mongo" version)
