@@ -125,6 +125,7 @@
         rs-nodes-js (replica-set-members-js rs-nodes)
         is-configsvr (not is-shard)
         script (format script-template rs-name rs-nodes-js is-configsvr)]
+    (info "Initiating sharded-cluster rs" rs-name "on nodes" rs-nodes "role" (if is-shard "shard" "conf"))
     (cu/write-file! script remote-script-path)
     (c/exec mongosh-binary-path "localhost" remote-script-path)))
 
@@ -135,6 +136,7 @@
         script-template (slurp (io/resource "rs-init-non-sharded.js"))
         rs-nodes-js (replica-set-members-js rs-nodes)
         script (format script-template rs-name rs-nodes-js)]
+    (info "Initiating unsharded-cluster rs" rs-name "on nodes" rs-nodes)
     (cu/write-file! script remote-script-path)
     (c/exec mongosh-binary-path "localhost" remote-script-path)))
 
@@ -148,27 +150,24 @@
 
 (defn add-shard
   [nodes rs-name]
-  (let [remote-script-path (str (cu/tmp-file!))
+  (let [nodes-formatted (clojure.string/join "," (map #(str % ":27017") nodes))
+        remote-script-path (str (cu/tmp-file!))
         script-template (slurp (io/resource "add-shard.js"))
-        script (format script-template rs-name nodes)]
+        script (format script-template rs-name nodes-formatted)]
     (cu/write-file! script remote-script-path)
-    (c/exec mongosh-binary-path "localhost" remote-script-path)))
+    (c/exec mongosh-binary-path "localhost:55555" remote-script-path)))
 
-(defn add-all-shards
-  [all-nodes rs-basename]
-  (let [shards-count (- (quot (count all-nodes) 3) 1)]
-    (dotimes [shard-number shards-count]
-      (let [shard-number (+ shard-number 1)
-            shard-nodes (map #(str "n" (+ % (* 3 shard-number))) [1 2 3])
-            shard-rs-name (str rs-basename "-shard" shard-number)]
-        (add-shard shard-nodes shard-rs-name)))))
+(defn add-shard-from-node
+  [shard-number shard-rs-name]
+  (let [shard-nodes (map #(str "n" (+ % (* 3 shard-number))) [1 2 3])]
+    (add-shard shard-nodes shard-rs-name)))
 
 (defn db
   "Mongo for this specific version"
   [version rs-name]
   (reify db/DB
     (setup! [_ test node]
-      (info node "installing mongo" version)
+      (info "Installing mongo" version)
       (let [config-path "resources/mongod-replicated-no-sharding.conf"
             node-number (Integer. (subs node 1))
             shard-number (quot (- node-number 1) 3)
@@ -181,6 +180,7 @@
             is-shard (and (:sharded test) (> shard-number 0))
             confrs-name (str rs-name "-conf")
             shardrs-name (str rs-name "-shard" shard-number)
+            orig-rs-name rs-name
             rs-name (if (:sharded test)
                         (if is-shard shardrs-name confrs-name)
                         rs-name)
@@ -189,8 +189,9 @@
                                  :chdir mongodb-prefix}
                                 mongod-binary-path
                                 :--config mongod-config-path]
-            mongod-opts (if (and (:sharded test) (= shard-number 0))
-                            (merge mongod-common-opts :--configsvr)
+            mongod-opts (if (:sharded test)
+                            (merge mongod-common-opts
+                                   (if (= shard-number 0) :--configsvr :--shardsvr))
                             mongod-common-opts)]
         (c/su
           (install-mongodb version)
@@ -216,11 +217,13 @@
                 (replica-set-initiate rs-name rs-nodes is-shard)
                 (replica-set-initiate rs-name rs-nodes))
               (Thread/sleep 20000)))
-          (when (and (:sharded test) (= node-number 0))
-            (add-all-shards (:nodes test) rs-name)))))
+          (when (and (:sharded test) (> shard-number 0) is-rs-initiator)
+            (info "Adding shard" rs-name)
+            (add-shard-from-node shard-number rs-name))
+          (Thread/sleep 30000))))
 
     (teardown! [_ test node]
-      (info node "tearing down mongo" version)
+      (info "Tearing down mongo" version)
       (c/su
         (when (:sharded test)
           (cu/stop-daemon! mongos-binary-path mongos-pidfile))
@@ -230,7 +233,7 @@
 
     db/LogFiles
     (log-files [_ test node]
-      [mongod-logfile])))
+      [mongod-logfile mongos-logfile])))
 
 (defn url
   [scheme host port path query-options]
