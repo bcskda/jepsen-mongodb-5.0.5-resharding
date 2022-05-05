@@ -29,6 +29,14 @@
                 :value modifier}]
         {:type :invoke, :f :txn, :value [op], :trace trace})))
 
+(defn op-reshard
+  [db-ns new-key]
+  (fn []
+    {:type :invoke
+     :f :reshard
+     :key db-ns
+     :value new-key}))
+
 ;
 ; Checker
 ;
@@ -70,7 +78,8 @@
 
 (defn ellify-history
   [jepsen-history]
-  (map ellify-event-top-level jepsen-history))
+  (map ellify-event-top-level
+       (remove #(contains? #{:start :stop :reshard} (:f %)) jepsen-history)))
 
 
 (defn elle-rw-checker
@@ -117,6 +126,8 @@
                                              (- (:concurrency opts) 1) (repeat elle-rw-r))
                                 (gen/stagger 0.1)
                                 (gen/nemesis
+                                  ; FIXME these sleep generators are not reentrant,
+                                  ; they exit immediately on 2nd+ call
                                   (cycle [(gen/sleep 1)
                                           {:type :info, :f :start}
                                           (gen/sleep 4)
@@ -139,6 +150,8 @@
                                           (repeat elle-rw-r)])
                                 (gen/stagger 0.1)
                                 (gen/nemesis
+                                  ; FIXME these sleep generators are not reentrant,
+                                  ; they exit immediately on 2nd+ call
                                   (cycle [(gen/sleep 1)
                                           {:type :info, :f :start}
                                           (gen/sleep 4)
@@ -167,6 +180,8 @@
           :generator       (->> (repeat (elle-txn--rmw {:f :random, :value 1e9}))
                                 (gen/stagger 0.1)
                                 (gen/nemesis
+                                  ; FIXME these sleep generators are not reentrant,
+                                  ; they exit immediately on 2nd+ call
                                   (cycle [(gen/sleep 1)
                                           {:type :info, :f :start}
                                           (gen/sleep 4)
@@ -188,23 +203,29 @@
           :txn-opts        {:w "majority"
                             :readConcern "majority"
                             :readPreference "nearest"}
-          :nemesis         (nemesis/partition-random-halves)
+          ;:nemesis         (nemesis/partition-random-halves)
+          :nemesis         (nemesis/noop)
           :checker         (elle-rw-checker {:consistency-models [:snapshot-isolation]})
           ; Fetch-add would write the same value multple times
           ; and cause elle/rw_register to fail
           ;:generator       (->> (repeat (elle-txn--rmw {:f :add, :value 1970}))
-          :generator       (->> (repeat (elle-txn--rmw {:f :random, :value 1e9}))
+          :generator       (->> (gen/reserve 1 (cycle [(gen/sleep 10)
+                                                       (op-reshard "test_db.test_collection" "{_id: 1}")
+                                                       ; FIXME these sleep generators are not reentrant,
+                                                       ; they exit immediately on 2nd+ call
+                                                       (gen/sleep 1200000)])
+                                             (- (:concurrency opts) 1) (repeat (elle-txn--rmw {:f :random, :value 1e9})))
                                 (gen/stagger 0.1)
-                                (gen/nemesis
-                                  (cycle [(gen/sleep 3)
-                                          {:type :info, :f :start}
-                                          (gen/sleep 4)
-                                          {:type :info, :f :stop}
-                                          (gen/sleep 11)
-                                          {:type :info, :f :start}
-                                          (gen/sleep 9)
-                                          {:type :info, :f :stop}]))
                                 (gen/time-limit (or (int (:time-limit opts)) 60)))}))
+                                ;(gen/nemesis
+                                ;  (cycle [(gen/sleep 3)
+                                ;          {:type :info, :f :start}
+                                ;          (gen/sleep 4)
+                                ;          {:type :info, :f :stop}
+                                ;          (gen/sleep 11)
+                                ;          {:type :info, :f :start}
+                                ;          (gen/sleep 9)
+                                ;          {:type :info, :f :stop}]))
 
 (def all-tests [unsafe-concerns-not-linearizable
                 single-document-linearizable

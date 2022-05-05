@@ -3,7 +3,7 @@
             [clojure.string :as str]
             [jepsen [client :as client]]
             [jepsen.mongodb5.driver :refer [write-v read-v with-txn] :as driver]
-            [jepsen.mongodb5.support :refer [rand-long skip-nil-values url]]
+            [jepsen.mongodb5.support :refer [rand-long skip-nil-values url] :as support]
             [slingshot.slingshot :refer [try+]])
   (:import jepsen.mongodb5.driver.KvCollection)
   (:import com.mongodb.ClientSessionOptions)
@@ -66,7 +66,12 @@
     :txn  (do (with-txn kv-coll (fn []
                 (let [txn-ops (:value op)
                       results (map #(client-invoke kv-coll %) txn-ops)]
-                  (assoc op :type :ok :value results)))))))
+                  (assoc op :type :ok :value results)))))
+    :reshard (let [db-ns (:key op)
+                   new-key (:value op)
+                   stdout (support/reshard-collection db-ns new-key)]
+               (assoc op :type :ok
+                         :value stdout))))
     ;:txn   (do (txn-start kv-coll)
     ;           (let [txn-ops (:value op)
     ;                    results (map #(client-invoke kv-coll %) txn-ops)]

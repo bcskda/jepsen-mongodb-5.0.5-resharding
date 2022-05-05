@@ -173,6 +173,17 @@
     (cu/write-file! script remote-script-path)
     (c/exec mongosh-binary-path "localhost:55555" remote-script-path)))
 
+(defn reshard-collection
+  [db-ns new-key]
+  (c/with-session "n1" (c/session "n1")
+    (let [remote-script-path (cu/tmp-file!)
+          script-template (slurp (io/resource "reshard-collection.js"))
+          script (format script-template
+                         db-ns new-key)]
+      (cu/write-file! script remote-script-path)
+      (c/exec mongosh-binary-path "localhost:55555" remote-script-path))))
+
+
 (defn db
   "Mongo for this specific version"
   [version rs-name]
