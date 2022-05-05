@@ -198,11 +198,11 @@
                                 (gen/nemesis
                                   (cycle [(gen/sleep 1)
                                           {:type :info, :f :start}
-                                          (gen/sleep 4)
+                                          (gen/sleep 5)
                                           {:type :info, :f :stop}
                                           (gen/sleep 2)
                                           {:type :info, :f :start}
-                                          (gen/sleep 8)
+                                          (gen/sleep 9)
                                           {:type :info, :f :stop}]))
                                 (gen/time-limit (or (int (:time-limit opts)) 60)))}))
 
