@@ -184,10 +184,10 @@
           :conn-opts       {:port 55555
                             :w "majority"
                             :readConcernLevel "majority"
-                            :readPreference "primary"}
+                            :readPreference "nearest"}
           :txn-opts        {:w "majority"
                             :readConcern "majority"
-                            :readPreference "primary"}
+                            :readPreference "nearest"}
           :nemesis         (nemesis/partition-random-halves)
           :checker         (elle-rw-checker {:consistency-models [:snapshot-isolation]})
           ; Fetch-add would write the same value multple times
@@ -196,11 +196,11 @@
           :generator       (->> (repeat (elle-txn--rmw {:f :random, :value 1e9}))
                                 (gen/stagger 0.1)
                                 (gen/nemesis
-                                  (cycle [(gen/sleep 1)
+                                  (cycle [(gen/sleep 3)
                                           {:type :info, :f :start}
-                                          (gen/sleep 5)
+                                          (gen/sleep 4)
                                           {:type :info, :f :stop}
-                                          (gen/sleep 2)
+                                          (gen/sleep 11)
                                           {:type :info, :f :start}
                                           (gen/sleep 9)
                                           {:type :info, :f :stop}]))
