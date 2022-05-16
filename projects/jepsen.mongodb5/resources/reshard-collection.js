@@ -12,7 +12,6 @@ const newKey = %s;
 const command = {reshardCollection: ns, key: newKey};
 
 const result = db.adminCommand(command);
-print("Result:");
 printjson(result);
 
 assert(result.ok === 1);
