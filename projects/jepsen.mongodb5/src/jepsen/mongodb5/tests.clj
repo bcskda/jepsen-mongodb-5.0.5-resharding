@@ -5,6 +5,7 @@
                     [nemesis :as nemesis]
                     [store :as store]
                     [tests :as tests]]
+            [jepsen.nemesis.combined :as nemesis_combined]
             [jepsen.os.debian :as debian]
             [jepsen.mongodb5.client :as mongo-client]
             [jepsen.mongodb5.support :refer [rand-long] :as mongo-support]
@@ -195,62 +196,55 @@
 
 (defn try-multishard-deployment
   [rs-name opts]
-  (merge (test-base rs-name opts)
-         {:sharded true
-          :conn-opts       {:port 55555
-                            :w "majority"
-                            :readConcernLevel "majority"
-                            :readPreference "nearest"}
-          :txn-opts        {:w "majority"
-                            :readConcern "majority"
-                            :readPreference "nearest"}
-          :nemesis         (nemesis/compose {#{:start :stop} (nemesis/partition-random-halves)
-                                             #{:reshard-start :reshard-progress} (blocking-reshard-nemesis)})
-                           ;  "test_db.test_collection"
-                           ;  "{_id: 1}")
-          ;:nemesis         (nemesis/noop)
-          :checker         (elle-rw-checker {:consistency-models [:snapshot-isolation]})
-          ; Fetch-add would write the same value multple times
-          ; and cause elle/rw_register to fail
-          ;:generator       (->> (repeat (elle-txn--rmw {:f :add, :value 1970}))
-          :generator       (->> (repeat (elle-txn--rmw {:f :random, :value 1e9}))
-                                (gen/stagger 0.1)
-                                (gen/nemesis
-                                  (gen/phases (gen/sleep 20)
-                                              ; 4x times: short + long partition, ~650 sec
-                                              ;(gen/cycle 4 [{:type :info, :f :start}
-                                              ;              (gen/sleep 43)
-                                              ;              {:type :info, :f :stop}
-                                              ;              (gen/sleep 13)
-                                              ;              {:type :info, :f :start}
-                                              ;              (gen/sleep 63)
-                                              ;              {:type :info, :f :stop}
-                                              ;              (gen/sleep 43)])
-                                              ; Short partitions during resharding, ~600 sec
-                                              ; TODO, no fault injection here for now
-                                              {:type :info
-                                               :f :reshard-start
-                                               :value {:db-ns "test_db.test_collection", :new-key "{_id: 1}"}}
-                                              (gen/sleep 20)
-                                              {:type :info, :f :reshard-progress}
-                                              (gen/sleep 10)
-                                              {:type :info, :f :start}
-                                              (gen/sleep 10)
-                                              {:type :info, :f :stop}
-                                              (gen/sleep 360)
-                                              {:type :info, :f :reshard-progress}
-                                              ))
-                                              ;(gen/sleep 390)
-                                              ; Long and short partitions after resharding, ~
-                                              ;(gen/cycle 3 [{:type :info, :f :start}
-                                              ;              (gen/sleep 63)
-                                              ;              {:type :info, :f :stop}
-                                              ;              (gen/sleep 33)
-                                              ;              {:type :info, :f :start}
-                                              ;              (gen/sleep 33)
-                                              ;              {:type :info, :f :stop}
-                                              ;              (gen/sleep 63)])))
-                                (gen/time-limit 900))}))
+  (let [base (test-base rs-name opts)]
+    (merge base
+           {:sharded true
+            :conn-opts       {:port 55555
+                              :w "majority"
+                              :readConcernLevel "majority"
+                              :readPreference "nearest"}
+            :txn-opts        {:w "majority"
+                              :readConcern "majority"
+                              :readPreference "nearest"}
+            :nemesis         (nemesis/compose {#{:start-partition :stop-partition} (nemesis_combined/partition-nemesis (:db base))
+                                               #{:reshard-start :reshard-progress} (blocking-reshard-nemesis)})
+                             ;  "test_db.test_collection"
+                             ;  "{_id: 1}")
+            ;:nemesis         (nemesis/noop)
+            :checker         (elle-rw-checker {:consistency-models [:snapshot-isolation]})
+            ; Fetch-add would write the same value multple times
+            ; and cause elle/rw_register to fail
+            ;:generator       (->> (repeat (elle-txn--rmw {:f :add, :value 1970}))
+            :generator       (->> (repeat (elle-txn--rmw {:f :random, :value 1e9}))
+                                  (gen/stagger 0.1)
+                                  (gen/nemesis
+                                    (gen/phases (gen/sleep 20)
+                                                ; Asynchronously start resharding, ~300 sec to complete
+                                                {:type :info
+                                                 :f :reshard-start
+                                                 :value {:db-ns "test_db.test_collection", :new-key "{_id: 1}"}}
+                                                ; Short partitions during resharding
+                                                ; TODO, no fault injection here for now
+                                                (gen/sleep 20)
+                                                {:type :info, :f :reshard-progress}
+                                                (gen/sleep 10)
+                                                {:type :info, :f :start-partition, :value :primaries}
+                                                (gen/sleep 10)
+                                                {:type :info, :f :stop-partition}
+                                                (gen/sleep 360)
+                                                {:type :info, :f :reshard-progress}
+                                                ))
+                                                ;(gen/sleep 390)
+                                                ; Long and short partitions after resharding, ~
+                                                ;(gen/cycle 3 [{:type :info, :f :start}
+                                                ;              (gen/sleep 63)
+                                                ;              {:type :info, :f :stop}
+                                                ;              (gen/sleep 33)
+                                                ;              {:type :info, :f :start}
+                                                ;              (gen/sleep 33)
+                                                ;              {:type :info, :f :stop}
+                                                ;              (gen/sleep 63)])))
+                                  (gen/time-limit 900))})))
 
 (def all-tests [unsafe-concerns-not-linearizable
                 single-document-linearizable
