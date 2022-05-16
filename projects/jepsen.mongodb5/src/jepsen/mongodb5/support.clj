@@ -184,10 +184,21 @@
       (c/exec mongosh-binary-path "localhost:55555" remote-script-path))))
 
 
+(defn local-set-of-primaries
+  [node]
+  (c/with-session node (c/session node)
+    (let [remote-script-path (cu/tmp-file!)
+          script (slurp (io/resource "local-view-of-primaries.js"))]
+      (cu/write-file! script remote-script-path)
+      (let [exec-stdout (c/exec mongosh-binary-path "localhost:27017" remote-script-path)]
+        (apply hash-set (clojure.string/split exec-stdout #" "))))))
+
+
 (defn db
   "Mongo for this specific version"
   [version rs-name]
-  (reify db/DB
+  (reify
+    db/DB
     (setup! [_ test node]
       (info "Installing mongo" version)
       (let [config-path "resources/mongod-replicated-no-sharding.conf"
@@ -259,7 +270,15 @@
 
     db/LogFiles
     (log-files [_ test node]
-      [mongod-logfile mongos-logfile])))
+      [mongod-logfile mongos-logfile])
+
+    db/Primary
+    (primaries [_ test]
+      (let [per-node-views (map #(local-set-of-primaries %) (:nodes test))]
+       (apply clojure.set/union per-node-views)))
+
+    (setup-primary! [_ test node]
+      (info "setup-primary!" node))))
 
 (defn url
   [scheme host port path query-options]
