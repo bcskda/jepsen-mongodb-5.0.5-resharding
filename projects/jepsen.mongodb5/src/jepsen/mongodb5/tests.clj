@@ -96,6 +96,23 @@
                           fixed-history))))))
 
 ;
+; Special nemesis: partitions and resharding
+;
+
+(defn nemesis-add-reshard
+  [underlying db-ns new-key]
+  (reify nemesis/Nemesis
+    (setup! [_ test]
+      (nemesis/setup! underlying test))
+    (invoke! [_ test op]
+      (case (:f op)
+            :reshard (let [output (mongo-support/reshard-collection db-ns new-key)]
+                       (assoc op :output output))
+            (nemesis/invoke! underlying test op)))
+    (teardown! [_ test]
+      (nemesis/teardown! underlying test))))
+
+;
 ; Tests
 ;
 
@@ -203,29 +220,46 @@
           :txn-opts        {:w "majority"
                             :readConcern "majority"
                             :readPreference "nearest"}
-          ;:nemesis         (nemesis/partition-random-halves)
-          :nemesis         (nemesis/noop)
+          :nemesis         (nemesis-add-reshard
+                             (nemesis/partition-random-halves)
+                             "test_db.test_collection"
+                             "{_id: 1}")
+          ;:nemesis         (nemesis/noop)
           :checker         (elle-rw-checker {:consistency-models [:snapshot-isolation]})
           ; Fetch-add would write the same value multple times
           ; and cause elle/rw_register to fail
           ;:generator       (->> (repeat (elle-txn--rmw {:f :add, :value 1970}))
-          :generator       (->> (gen/reserve 1 (cycle [(gen/sleep 10)
-                                                       (op-reshard "test_db.test_collection" "{_id: 1}")
-                                                       ; FIXME these sleep generators are not reentrant,
-                                                       ; they exit immediately on 2nd+ call
-                                                       (gen/sleep 1200000)])
-                                             (- (:concurrency opts) 1) (repeat (elle-txn--rmw {:f :random, :value 1e9})))
+          :generator       (->> (repeat (elle-txn--rmw {:f :random, :value 1e9}))
                                 (gen/stagger 0.1)
-                                (gen/time-limit (or (int (:time-limit opts)) 60)))}))
-                                ;(gen/nemesis
-                                ;  (cycle [(gen/sleep 3)
-                                ;          {:type :info, :f :start}
-                                ;          (gen/sleep 4)
-                                ;          {:type :info, :f :stop}
-                                ;          (gen/sleep 11)
-                                ;          {:type :info, :f :start}
-                                ;          (gen/sleep 9)
-                                ;          {:type :info, :f :stop}]))
+                                (gen/nemesis
+                                  (gen/phases (gen/sleep 20)
+                                              ; 4x times: short + long partition, ~650 sec
+                                              ;(gen/cycle 4 [{:type :info, :f :start}
+                                              ;              (gen/sleep 43)
+                                              ;              {:type :info, :f :stop}
+                                              ;              (gen/sleep 13)
+                                              ;              {:type :info, :f :start}
+                                              ;              (gen/sleep 63)
+                                              ;              {:type :info, :f :stop}
+                                              ;              (gen/sleep 43)])
+                                              ; Short partitions during resharding, ~600 sec
+                                              ; TODO, no fault injection here for now
+                                              (gen/once {:type :info, :f :reshard})
+                                              {:type :info, :f :start}
+                                              (gen/sleep 10)
+                                              {:type :info, :f :stop}
+                                              ))
+                                              ;(gen/sleep 390)
+                                              ; Long and short partitions after resharding, ~
+                                              ;(gen/cycle 3 [{:type :info, :f :start}
+                                              ;              (gen/sleep 63)
+                                              ;              {:type :info, :f :stop}
+                                              ;              (gen/sleep 33)
+                                              ;              {:type :info, :f :start}
+                                              ;              (gen/sleep 33)
+                                              ;              {:type :info, :f :stop}
+                                              ;              (gen/sleep 63)])))
+                                (gen/time-limit 900))}))
 
 (def all-tests [unsafe-concerns-not-linearizable
                 single-document-linearizable
