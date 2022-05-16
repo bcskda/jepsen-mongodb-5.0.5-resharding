@@ -194,7 +194,7 @@
                                           {:type :info, :f :stop}]))
                                 (gen/time-limit (or (int (:time-limit opts)) 60)))}))
 
-(defn try-multishard-deployment
+(defn resharding-survives-primary-failover
   [rs-name opts]
   (let [base (test-base rs-name opts)]
     (merge base
@@ -208,44 +208,27 @@
                               :readPreference "nearest"}
             :nemesis         (nemesis/compose {#{:start-partition :stop-partition} (nemesis_combined/partition-nemesis (:db base))
                                                #{:reshard-start :reshard-progress} (blocking-reshard-nemesis)})
-                             ;  "test_db.test_collection"
-                             ;  "{_id: 1}")
-            ;:nemesis         (nemesis/noop)
             :checker         (elle-rw-checker {:consistency-models [:snapshot-isolation]})
-            ; Fetch-add would write the same value multple times
-            ; and cause elle/rw_register to fail
-            ;:generator       (->> (repeat (elle-txn--rmw {:f :add, :value 1970}))
             :generator       (->> (repeat (elle-txn--rmw {:f :random, :value 1e9}))
                                   (gen/stagger 0.1)
                                   (gen/nemesis
-                                    (gen/phases (gen/sleep 20)
-                                                ; Asynchronously start resharding, ~300 sec to complete
-                                                {:type :info
-                                                 :f :reshard-start
-                                                 :value {:db-ns "test_db.test_collection", :new-key "{_id: 1}"}}
-                                                ; Short partitions during resharding
-                                                ; TODO, no fault injection here for now
-                                                (gen/sleep 20)
-                                                {:type :info, :f :reshard-progress}
-                                                (gen/sleep 10)
-                                                {:type :info, :f :start-partition, :value :primaries}
-                                                (gen/sleep 10)
-                                                {:type :info, :f :stop-partition}
-                                                (gen/sleep 360)
-                                                {:type :info, :f :reshard-progress}
-                                                ))
-                                                ;(gen/sleep 390)
-                                                ; Long and short partitions after resharding, ~
-                                                ;(gen/cycle 3 [{:type :info, :f :start}
-                                                ;              (gen/sleep 63)
-                                                ;              {:type :info, :f :stop}
-                                                ;              (gen/sleep 33)
-                                                ;              {:type :info, :f :start}
-                                                ;              (gen/sleep 33)
-                                                ;              {:type :info, :f :stop}
-                                                ;              (gen/sleep 63)])))
-                                  (gen/time-limit 900))})))
+                                    (gen/phases
+                                      (gen/sleep 20)
+                                      ; Asynchronously start resharding, ~300 sec to complete
+                                      {:type :info
+                                       :f :reshard-start
+                                       :value {:db-ns "test_db.test_collection", :new-key "{_id: 1}"}}
+                                      ; Wait until resharding actually starts
+                                      (gen/sleep 20)
+                                      ; Partition primaries of both replica sets to cause failover
+                                      {:type :info, :f :start-partition, :value :primaries}
+                                      (gen/sleep 10)
+                                      {:type :info, :f :stop-partition}
+                                      (gen/sleep 360)
+                                      {:type :info, :f :reshard-progress}))
+                                  (gen/time-limit 600))})))
 
 (def all-tests [unsafe-concerns-not-linearizable
                 single-document-linearizable
-                single-shard-only-snapshot-isolation])
+                single-shard-only-snapshot-isolation
+                resharding-survives-primary-failover])
