@@ -181,7 +181,7 @@
           script (format script-template
                          db-ns new-key)]
       (cu/write-file! script remote-script-path)
-      (c/exec mongosh-binary-path "localhost:55555" remote-script-path))))
+      (c/exec mongosh-binary-path "--quiet" "localhost:55555" remote-script-path))))
 
 
 (defn local-set-of-primaries
@@ -190,7 +190,8 @@
     (let [remote-script-path (cu/tmp-file!)
           script (slurp (io/resource "local-view-of-primaries.js"))]
       (cu/write-file! script remote-script-path)
-      (let [exec-stdout (c/exec mongosh-binary-path "localhost:27017" remote-script-path)]
+      (let [exec-stdout (c/exec mongosh-binary-path "--quiet" "localhost:27017" remote-script-path)]
+        (info "local-set-of-primaries:" "script stdout:" exec-stdout)
         (apply hash-set (clojure.string/split exec-stdout #" "))))))
 
 
@@ -231,6 +232,7 @@
           (configure-mongod rs-name)
           (apply cu/start-daemon! mongod-opts)
           (Thread/sleep 20000)
+          (install-mongosh version)
           (when (:sharded test)
             (do
               ;(install-mongos version)
@@ -245,7 +247,6 @@
               (Thread/sleep 20000))
           (when is-rs-initiator
             (do
-              (install-mongosh version)
               (if (:sharded test)
                   (replica-set-initiate rs-name rs-nodes is-shard)
                   (replica-set-initiate rs-name rs-nodes))
