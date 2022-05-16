@@ -7,7 +7,8 @@
                     [tests :as tests]]
             [jepsen.os.debian :as debian]
             [jepsen.mongodb5.client :as mongo-client]
-            [jepsen.mongodb5.support :refer [rand-long] :as mongo-support]))
+            [jepsen.mongodb5.support :refer [rand-long] :as mongo-support]
+            [jepsen.mongodb5.reshard_nemesis :refer [blocking-reshard-nemesis]]))
 
 (defn rand-key [n] (str "key" (rand-long n)))
 
@@ -94,23 +95,6 @@
           (print (mapv #(get fixed-history %) [0 1 2 10 15 20]))
           (elle-rw/check (assoc opts :directory directory)
                           fixed-history))))))
-
-;
-; Special nemesis: partitions and resharding
-;
-
-(defn nemesis-add-reshard
-  [underlying db-ns new-key]
-  (reify nemesis/Nemesis
-    (setup! [_ test]
-      (nemesis/setup! underlying test))
-    (invoke! [_ test op]
-      (case (:f op)
-            :reshard (let [output (mongo-support/reshard-collection db-ns new-key)]
-                       (assoc op :output output))
-            (nemesis/invoke! underlying test op)))
-    (teardown! [_ test]
-      (nemesis/teardown! underlying test))))
 
 ;
 ; Tests
@@ -220,10 +204,10 @@
           :txn-opts        {:w "majority"
                             :readConcern "majority"
                             :readPreference "nearest"}
-          :nemesis         (nemesis-add-reshard
-                             (nemesis/partition-random-halves)
-                             "test_db.test_collection"
-                             "{_id: 1}")
+          :nemesis         (nemesis/compose {#{:start :stop} (nemesis/partition-random-halves)
+                                             #{:reshard-start :reshard-progress} (blocking-reshard-nemesis)})
+                           ;  "test_db.test_collection"
+                           ;  "{_id: 1}")
           ;:nemesis         (nemesis/noop)
           :checker         (elle-rw-checker {:consistency-models [:snapshot-isolation]})
           ; Fetch-add would write the same value multple times
@@ -244,10 +228,17 @@
                                               ;              (gen/sleep 43)])
                                               ; Short partitions during resharding, ~600 sec
                                               ; TODO, no fault injection here for now
-                                              (gen/once {:type :info, :f :reshard})
+                                              {:type :info
+                                               :f :reshard-start
+                                               :value {:db-ns "test_db.test_collection", :new-key "{_id: 1}"}}
+                                              (gen/sleep 20)
+                                              {:type :info, :f :reshard-progress}
+                                              (gen/sleep 10)
                                               {:type :info, :f :start}
                                               (gen/sleep 10)
                                               {:type :info, :f :stop}
+                                              (gen/sleep 360)
+                                              {:type :info, :f :reshard-progress}
                                               ))
                                               ;(gen/sleep 390)
                                               ; Long and short partitions after resharding, ~
