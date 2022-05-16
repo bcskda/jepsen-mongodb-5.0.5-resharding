@@ -10,8 +10,7 @@
 
 (defn default-test-fn
   [opts]
-  ;(mongo-tests/single-shard-only-snapshot-isolation replica-set-name opts))
-  (mongo-tests/try-multishard-deployment replica-set-name opts))
+  (mongo-tests/resharding-survives-primary-failover replica-set-name opts))
 
 (defn all-test-fns
   [opts]
