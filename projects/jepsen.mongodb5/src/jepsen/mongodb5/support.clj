@@ -175,7 +175,7 @@
 
 (defn reshard-collection
   [db-ns new-key]
-  (c/with-session "n1" (c/session "n1")
+  (c/with-session "n2" (c/session "n2")
     (let [remote-script-path (cu/tmp-file!)
           script-template (slurp (io/resource "reshard-collection.js"))
           script (format script-template

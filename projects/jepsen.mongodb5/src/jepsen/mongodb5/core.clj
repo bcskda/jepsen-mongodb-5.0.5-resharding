@@ -10,7 +10,7 @@
 
 (defn default-test-fn
   [opts]
-  (mongo-tests/resharding-survives-primary-failover replica-set-name opts))
+  (mongo-tests/resharding-and-long-partition replica-set-name opts))
 
 (defn all-test-fns
   [opts]
